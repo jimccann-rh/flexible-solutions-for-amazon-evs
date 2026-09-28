@@ -1,4 +1,6 @@
 import ipaddress
+import re
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -278,6 +280,15 @@ class NetworkCidrTests(unittest.TestCase):
         self.assertIn("https://github.com/*", script)
         self.assertIn('*) fail "blueprint.orchestrator_repo_url must be an HTTPS GitHub URL"', script)
         self.assertNotIn("https://github.com/aws/solutions-for-amazon-evs.git", script)
+
+    def test_runner_userdata_is_valid_shell_after_cloudformation_substitution(self):
+        path = Path(__file__).resolve().parents[1] / "evs-deployment-orchestrator.yaml"
+        template = yaml.load(path.read_text(), Loader=CloudFormationLoader)
+        user_data = template["Resources"]["RunnerInstance"]["Properties"]["UserData"]["Fn::Base64"]["Fn::Sub"]
+        script = user_data[0] if isinstance(user_data, list) else user_data
+        script = re.sub(r"\$\{[^}]+\}", "placeholder", script)
+        result = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

@@ -899,7 +899,7 @@ Resources:
               if [ "$S" = "FAILED" ]; then
                 STAGE=$(grep -oE "FAIL  \[[a-z0-9_]+\]" /opt/evs/orchestrator.log 2>/dev/null | tail -1)
                 MSG="EVS deployment FAILED $STAGE. NOTE: any created EVS hosts are still billing - resume or destroy, do not delete the stack first. To resume, use this stack'"'"'s ResumeCommand output (SSM to '"$INSTANCE_ID"', then rerun the orchestrator with --resume). Last log lines: $(tail -5 /opt/evs/orchestrator.log 2>/dev/null)"
-                # Only publish if the orchestrator didn't already send its own failure notification
+                # Only publish if the orchestrator did not already send its own failure notification
                 # (it logs "SNS notification sent" when it does). Avoids duplicate emails.
                 if ! grep -q "SNS notification sent" /opt/evs/orchestrator.log 2>/dev/null; then
                   [ -n "${TopicArn}" ] && aws sns publish --region ${AWS::Region} --topic-arn "${TopicArn}" \

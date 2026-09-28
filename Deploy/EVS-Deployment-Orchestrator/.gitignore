@@ -8,9 +8,12 @@
 .state/
 *.backup
 
-# Credentials and sensitive data
+# Credentials and deployment-specific files
 *.pem
 *.key
+/blueprint.yaml
+/*.ova
+/VMware-ovftool-*.zip
 
 # OS files
 .DS_Store

@@ -151,7 +151,10 @@ cp blueprints/custom.all-options.example.yaml blueprint.yaml
 ```powershell
 Copy-Item blueprints/custom.all-options.example.yaml blueprint.yaml
 ```
-Then open `blueprint.yaml` and change the two `CHANGE ME` fields.
+Then open `blueprint.yaml` and change the two `CHANGE ME` fields. Set the root-level
+`orchestrator_repo_url` to a publicly cloneable HTTPS GitHub repository; this is
+required for bootstrap, which reads it from the uploaded blueprint before cloning
+that repository's `main` branch. The all-options example includes the setting.
 
 With a ready-to-go blueprint the only fields you must change are:
 
@@ -301,6 +304,10 @@ own `DoNotDelete-EVS-*` VLAN subnets from the supplied CIDRs. The stack does
 not create TGW attachments or routes; those remain externally managed.
 `TgwAggregateCidr` is validated as the aggregate containing the disjoint VPC and
 overlay ranges.
+
+An updated template or blueprint affects only a new bootstrap launch. It does
+not update or repair a runner that has already started; assess that stack's
+status and choose a recovery or relaunch procedure separately.
 
 **CLI example:**
 

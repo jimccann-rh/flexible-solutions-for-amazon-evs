@@ -21,6 +21,8 @@
 # (The OVA + ovftool are the OvaKey/OvfKey CloudFormation parameters — not set here.)
 # For ready-made starting points, see the other files in this blueprints/ folder.
 
+# orchestrator_repo_url: "https://github.com/jimccann-rh/flexible-solutions-for-amazon-evs.git" # REQUIRED for CloudFormation bootstrap; clones main from this public repository.
+
 # network:                                  # NON-BOOTSTRAP deployments only; bootstrap uses CloudFormation parameters.
 #   vpc_cidr: "10.28.32.0/21"              # VPC underlay; must match the existing VPC when applicable.
 #   subnet_cidr_bits: 4                     # Additional bits: /21 + 4 = /25; /22 + 4 = /26.

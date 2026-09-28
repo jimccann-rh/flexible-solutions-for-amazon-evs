@@ -242,5 +242,14 @@ class NetworkCidrTests(unittest.TestCase):
             allocate_subnets("2001:db8::/32", 4)
 
 
+    def test_all_options_blueprint_documents_orchestrator_repo_url(self):
+        path = Path(__file__).resolve().parents[1] / "blueprints/custom.all-options.example.yaml"
+        text = path.read_text()
+        self.assertIn(
+            'orchestrator_repo_url: "https://github.com/jimccann-rh/flexible-solutions-for-amazon-evs.git"',
+            text,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

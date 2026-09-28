@@ -38,6 +38,10 @@ while true; do
   log_prefix="/evs/${STACK_NAME}-${log_suffix}"
   now_ms=$(($(date +%s) * 1000))
   printf '\n[%s] CloudFormation %s: %s\n' "$(date -u +%FT%TZ)" "$STACK_NAME" "$stack_status"
+  echo 'Related CloudFormation stacks:'
+  infra_stacks=$(aws cloudformation list-stacks --region "$REGION" --output json |
+    python3 -c 'import json,sys; prefix=sys.argv[1]+"-amazon-evs-"; [print("{}: {}".format(s["StackName"],s["StackStatus"])) for s in json.load(sys.stdin)["StackSummaries"] if s["StackName"].startswith(prefix) and s["StackStatus"]!="DELETE_COMPLETE"]' "$STACK_NAME")
+  if [[ -n "$infra_stacks" ]]; then printf '%s\n' "$infra_stacks"; else echo '  (none)'; fi
   printf 'EVS environment %s:\n' "$ENVIRONMENT_ID"
   aws evs get-environment --environment-id "$ENVIRONMENT_ID" --region "$REGION" \
     --query 'environment.{Name:environmentName,State:environmentState,Details:stateDetails}' --output table

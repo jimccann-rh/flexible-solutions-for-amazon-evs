@@ -25,6 +25,8 @@ class WatchDeploymentTests(unittest.TestCase):
                 "    f.write(json.dumps(args) + '\\n')\n"
                 "if args[:2] == ['cloudformation', 'describe-stacks']:\n"
                 "    print(json.dumps({'Stacks': [{'StackId': 'arn:aws:cloudformation:us-east-1:123456789012:stack/test-stack/abcd1234-aaaa', 'StackStatus': 'CREATE_COMPLETE', 'Outputs': [{'OutputKey': 'RunnerInstanceId', 'OutputValue': 'i-123'}]}]}))\n"
+                "elif args[:2] == ['cloudformation', 'list-stacks']:\n"
+                "    print(json.dumps({'StackSummaries': [{'StackName': 'test-stack-amazon-evs-9-1-0-0-infrastructure', 'StackStatus': 'CREATE_IN_PROGRESS'}, {'StackName': 'unrelated-stack', 'StackStatus': 'UPDATE_COMPLETE'}]}))\n"
                 "elif args[:2] == ['evs', 'get-environment']:\n"
                 "    print(json.dumps({'environment': {'environmentName': 'my-vcf-env', 'environmentState': 'CREATED', 'stateDetails': 'ready'}}))\n"
                 "elif args[:2] == ['evs', 'list-environment-hosts']:\n"
@@ -56,6 +58,8 @@ class WatchDeploymentTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             for text in (
                 "CREATE_COMPLETE",
+                "test-stack-amazon-evs-9-1-0-0-infrastructure",
+                "CREATE_IN_PROGRESS",
                 "my-vcf-env",
                 "esxi01",
                 "RUNNING",
@@ -63,12 +67,14 @@ class WatchDeploymentTests(unittest.TestCase):
                 "orchestrator log event",
             ):
                 self.assertIn(text, result.stdout)
+            self.assertNotIn("unrelated-stack", result.stdout)
 
             calls = [json.loads(line) for line in call_log.read_text().splitlines()]
             self.assertEqual(
                 {(args[0], args[1]) for args in calls},
                 {
                     ("cloudformation", "describe-stacks"),
+                    ("cloudformation", "list-stacks"),
                     ("evs", "get-environment"),
                     ("evs", "list-environment-hosts"),
                     ("ec2", "describe-tags"),

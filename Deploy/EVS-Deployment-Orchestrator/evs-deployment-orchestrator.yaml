@@ -738,23 +738,9 @@ Resources:
             CWEOF
             /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json -s || true
 
-            # 2. Orchestrator source. Note: inside Fn::Sub, bash vars use $var
-            #    (no braces) so they aren't parsed as CFN substitutions.
+            # 2. Prepare the runner workspace and YAML parser. The blueprint
+            #    selects the source repository after it is downloaded below.
             mkdir -p /opt/evs && cd /opt/evs
-            # Tracks the main branch rather than an immutable SHA or tag, so a
-            # freshly-merged fix reaches new deployments without a template
-            # change. The trade-off is deliberate: main is a moving tip, so a
-            # regression merged upstream affects new stacks (and stack updates,
-            # which re-run this bootstrap) immediately. Every change to main goes
-            # through PR review on the public repo. If you need a build frozen
-            # against code you have reviewed yourself, set PINNED_COMMIT to a tag
-            # or a full commit SHA instead -- the checkout below accepts any of
-            # the three.
-            PINNED_COMMIT="main"
-            retry git clone "https://github.com/aws/solutions-for-amazon-evs.git" src || fail "git clone https://github.com/aws/solutions-for-amazon-evs"
-            (cd src && git checkout --quiet "$PINNED_COMMIT") || fail "checkout $PINNED_COMMIT (no such branch, tag, or commit in the upstream repo)"
-            cd src/Deploy/EVS-Deployment-Orchestrator/orchestrator || fail "the orchestrator directory is missing at PINNED_COMMIT=$PINNED_COMMIT -- the clone succeeded but that ref does not contain Deploy/EVS-Deployment-Orchestrator/orchestrator. Check the PINNED_COMMIT value in this template."
-            echo "orchestrator commit: $(git rev-parse HEAD)"
             retry python3.11 -m pip install --quiet pyyaml || fail "pyyaml install"
 
             # 3. Account preflight - fail the stack in minutes, not the
@@ -854,6 +840,21 @@ Resources:
                 yaml.safe_dump(bp, f, sort_keys=False)
             print("blueprint overlay complete")
             PYEOF
+
+            # 7b. Clone the source selected by the downloaded blueprint.
+            ORCHESTRATOR_REPO_URL=$(python3.11 -c 'import yaml; print((yaml.safe_load(open("blueprint.yaml")) or {}).get("orchestrator_repo_url", ""))') \
+              || fail "could not read blueprint.orchestrator_repo_url"
+            case "$ORCHESTRATOR_REPO_URL" in
+              https://github.com/*/*) ;;
+              *) fail "blueprint.orchestrator_repo_url must be an HTTPS GitHub URL" ;;
+            esac
+            PINNED_COMMIT="main"
+            retry git clone "$ORCHESTRATOR_REPO_URL" src || fail "orchestrator source clone failed"
+            (cd src && git checkout --quiet "$PINNED_COMMIT") || fail "orchestrator ref checkout failed"
+            cp ./blueprint.yaml src/Deploy/EVS-Deployment-Orchestrator/orchestrator/blueprint.yaml \
+              || fail "copy blueprint into orchestrator directory"
+            cd src/Deploy/EVS-Deployment-Orchestrator/orchestrator || fail "orchestrator directory missing"
+            echo "orchestrator commit: $(git rev-parse HEAD)"
 
             # 8. Depot secret preflight: verify it exists before committing to
             #    the multi-hour deployment (the orchestrator would only find

@@ -250,6 +250,35 @@ class NetworkCidrTests(unittest.TestCase):
             text,
         )
 
+    def test_runner_clones_blueprint_selected_repo_after_download(self):
+        path = Path(__file__).resolve().parents[1] / "evs-deployment-orchestrator.yaml"
+        template = yaml.load(path.read_text(), Loader=CloudFormationLoader)
+        user_data = template["Resources"]["RunnerInstance"]["Properties"]["UserData"]["Fn::Base64"]["Fn::Sub"]
+        script = user_data[0] if isinstance(user_data, list) else user_data
+        download = 'retry aws s3 cp "s3://$BLUEPRINT_BUCKET/$BLUEPRINT_OBJ_KEY" ./blueprint.yaml'
+        parse_url = 'ORCHESTRATOR_REPO_URL=$(python3.11 -c'
+        validate_url = 'case "$ORCHESTRATOR_REPO_URL" in'
+        clone = 'retry git clone "$ORCHESTRATOR_REPO_URL" src'
+        copy_blueprint = "cp ./blueprint.yaml src/Deploy/EVS-Deployment-Orchestrator/orchestrator/blueprint.yaml"
+        enter_orchestrator = "cd src/Deploy/EVS-Deployment-Orchestrator/orchestrator"
+
+        self.assertIn(download, script)
+        self.assertIn(parse_url, script)
+        self.assertIn(validate_url, script)
+        self.assertIn(clone, script)
+        self.assertIn(copy_blueprint, script)
+        self.assertIn(enter_orchestrator, script)
+        self.assertLess(script.index("retry python3.11 -m pip install --quiet pyyaml"), script.index(parse_url))
+        self.assertLess(script.index(download), script.index(parse_url))
+        self.assertLess(script.index(parse_url), script.index(validate_url))
+        self.assertLess(script.index(validate_url), script.index(clone))
+        self.assertLess(script.index(clone), script.index(copy_blueprint))
+        self.assertLess(script.index(copy_blueprint), script.index(enter_orchestrator))
+        self.assertIn('get("orchestrator_repo_url", "")', script)
+        self.assertIn("https://github.com/*", script)
+        self.assertIn('*) fail "blueprint.orchestrator_repo_url must be an HTTPS GitHub URL"', script)
+        self.assertNotIn("https://github.com/aws/solutions-for-amazon-evs.git", script)
+
 
 if __name__ == "__main__":
     unittest.main()

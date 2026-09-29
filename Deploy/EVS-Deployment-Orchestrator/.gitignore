@@ -11,7 +11,6 @@
 # Credentials and deployment-specific files
 *.pem
 *.key
-/blueprint.yaml
 /*.ova
 /VMware-ovftool-*.zip
 

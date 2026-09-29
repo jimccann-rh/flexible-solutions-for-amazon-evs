@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Read-only deployment status and CloudWatch log monitor.
 usage() {
-  echo "Usage: STACK_NAME=... REGION=... ENVIRONMENT_ID=... $0 [--once]" >&2
-  echo "Set ENVIRONMENT_NAME instead of ENVIRONMENT_ID to resolve it via EVS." >&2
+  echo "Usage: STACK_NAME=... REGION=... $0 [--once]" >&2
+  echo "Optionally set ENVIRONMENT_ID or ENVIRONMENT_NAME for EVS/host status." >&2
   echo "POLL_INTERVAL_SECONDS defaults to 600 (10 minutes)." >&2
 }
 
@@ -19,12 +19,6 @@ esac
 : "${REGION:?set REGION}"
 POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-600}
 [[ "$POLL_INTERVAL_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "POLL_INTERVAL_SECONDS must be a positive integer" >&2; exit 2; }
-
-if [[ -z "${ENVIRONMENT_ID:-}" ]]; then
-  : "${ENVIRONMENT_NAME:?set ENVIRONMENT_ID or ENVIRONMENT_NAME}"
-  ENVIRONMENT_ID=$(aws evs list-environments --region "$REGION" --output json |
-    python3 -c 'import json,os,sys; xs=[x["environmentId"] for x in json.load(sys.stdin)["environmentSummaries"] if x["environmentName"]==os.environ["ENVIRONMENT_NAME"]]; print(xs[0] if len(xs)==1 else sys.exit("expected exactly one matching EVS environment"))')
-fi
 
 since_ms=$((($(date +%s) - 600) * 1000))
 
@@ -42,12 +36,34 @@ while true; do
   infra_stacks=$(aws cloudformation list-stacks --region "$REGION" --output json |
     python3 -c 'import json,sys; prefix=sys.argv[1]+"-amazon-evs-"; [print("{}: {}".format(s["StackName"],s["StackStatus"])) for s in json.load(sys.stdin)["StackSummaries"] if s["StackName"].startswith(prefix) and s["StackStatus"]!="DELETE_COMPLETE"]' "$STACK_NAME")
   if [[ -n "$infra_stacks" ]]; then printf '%s\n' "$infra_stacks"; else echo '  (none)'; fi
-  printf 'EVS environment %s:\n' "$ENVIRONMENT_ID"
-  aws evs get-environment --environment-id "$ENVIRONMENT_ID" --region "$REGION" \
-    --query 'environment.{Name:environmentName,State:environmentState,Details:stateDetails}' --output table
-  echo 'EVS hosts:'
-  aws evs list-environment-hosts --environment-id "$ENVIRONMENT_ID" --region "$REGION" \
-    --query 'environmentHosts[].{Name:hostName,State:hostState,Details:stateDetails}' --output table
+  environment_id=${ENVIRONMENT_ID:-}
+  lookup_failed=false
+  if [[ -z "$environment_id" && -n "${ENVIRONMENT_NAME:-}" ]]; then
+    if environment_list=$(aws evs list-environments --region "$REGION" --output json); then
+      environment_id=$(python3 -c 'import json,os,sys; xs=[x["environmentId"] for x in json.load(sys.stdin)["environmentSummaries"] if x["environmentName"]==os.environ["ENVIRONMENT_NAME"]]; print(xs[0] if len(xs)==1 else "")' <<<"$environment_list")
+    else
+      lookup_failed=true
+    fi
+  fi
+  if [[ -n "$environment_id" ]]; then
+    ENVIRONMENT_ID=$environment_id
+    printf 'EVS environment %s:\n' "$environment_id"
+    if ! aws evs get-environment --environment-id "$environment_id" --region "$REGION" \
+      --query 'environment.{Name:environmentName,State:environmentState,Details:stateDetails}' --output table; then
+      echo '  unable to read EVS environment; continuing'
+    fi
+    echo 'EVS hosts:'
+    if ! aws evs list-environment-hosts --environment-id "$environment_id" --region "$REGION" \
+      --query 'environmentHosts[].{Name:hostName,State:hostState,Details:stateDetails}' --output table; then
+      echo '  unable to read EVS hosts; continuing'
+    fi
+  elif [[ "$lookup_failed" == true ]]; then
+    printf 'EVS environment %s: lookup failed; continuing with CloudFormation/logs\n' "${ENVIRONMENT_NAME:-}"
+  elif [[ -n "${ENVIRONMENT_NAME:-}" ]]; then
+    printf 'EVS environment %s: not found yet\n' "$ENVIRONMENT_NAME"
+  else
+    echo 'EVS environment not configured; showing CloudFormation/logs only.'
+  fi
 
   if [[ -n "$runner_id" && "$runner_id" != None ]]; then
     stage=$(aws ec2 describe-tags --region "$REGION" \

@@ -82,6 +82,46 @@ class WatchDeploymentTests(unittest.TestCase):
                 },
             )
 
+    def test_stack_status_is_reported_before_evs_environment_exists(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bindir = Path(temp_dir) / "bin"
+            bindir.mkdir()
+            fake_aws = bindir / "aws"
+            fake_aws.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "args = sys.argv[1:]\n"
+                "if args[:2] == ['cloudformation', 'describe-stacks']:\n"
+                "    print(json.dumps({'Stacks': [{'StackId': 'arn:aws:cloudformation:us-east-1:123456789012:stack/test-stack/abcd1234-aaaa', 'StackStatus': 'CREATE_IN_PROGRESS', 'Outputs': []}]}))\n"
+                "elif args[:2] == ['cloudformation', 'list-stacks']:\n"
+                "    print(json.dumps({'StackSummaries': []}))\n"
+                "elif args[:2] == ['evs', 'list-environments']:\n"
+                "    print(json.dumps({'environmentSummaries': []}))\n"
+                "elif args[:2] == ['logs', 'filter-log-events']:\n"
+                "    print('None')\n"
+                "else:\n"
+                "    sys.exit('unexpected AWS call: ' + repr(args))\n"
+            )
+            fake_aws.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                STACK_NAME="test-stack",
+                REGION="us-east-1",
+                ENVIRONMENT_NAME="my-vcf-env",
+                PATH=f"{bindir}:{env['PATH']}",
+            )
+            env.pop("ENVIRONMENT_ID", None)
+            result = subprocess.run(
+                ["bash", str(WATCHER), "--once"],
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CREATE_IN_PROGRESS", result.stdout)
+        self.assertIn("my-vcf-env: not found yet", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

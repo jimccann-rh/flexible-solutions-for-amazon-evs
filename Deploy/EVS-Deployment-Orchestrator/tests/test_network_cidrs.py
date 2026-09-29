@@ -72,6 +72,26 @@ class NetworkCidrTests(unittest.TestCase):
                 "external_reserved_cidrs": [],
             })
 
+    def test_runner_role_can_find_hosted_zones_associated_with_a_byo_vpc(self):
+        path = PROJECT_DIR / "evs-deployment-orchestrator.yaml"
+        template = yaml.load(path.read_text(), Loader=CloudFormationLoader)
+        policies = template["Resources"]["RunnerRole"]["Properties"]["Policies"]
+        statements = [
+            statement
+            for policy in policies
+            for statement in policy["PolicyDocument"]["Statement"]
+        ]
+        actions = [
+            action
+            for statement in statements
+            for action in (
+                statement["Action"]
+                if isinstance(statement["Action"], list)
+                else [statement["Action"]]
+            )
+        ]
+        self.assertIn("route53:ListHostedZonesByVPC", actions)
+
     def test_cloudformation_subnets_use_host_bits_and_preserve_relative_allocator_bits(self):
         path = Path(__file__).resolve().parents[1] / "evs-deployment-orchestrator.yaml"
         template = yaml.load(path.read_text(), Loader=CloudFormationLoader)

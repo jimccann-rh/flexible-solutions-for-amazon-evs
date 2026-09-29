@@ -791,6 +791,13 @@ CIDRs. For the example above, use `VpcCidr=10.28.32.0/21`,
 EVS VLAN subnets are allocated separately from the Service Access and Public
 subnets. The TGW attachment and routes are customer-managed.
 
+For BYO-VPC deployments, associate existing private Route 53 zones for the
+blueprint's exact `dns.fqdn` and the reverse zone derived from the VPC CIDR
+(for example, `28.10.in-addr.arpa` for `10.28.32.0/21`). The orchestrator adds
+its A/PTR records to those zones without creating, deleting, or changing their
+VPC associations. It stops before updating CloudFormation if either zone is
+missing.
+
 ## SSH access setup (runner only)
 
 > This section is **only for SSH'ing into the Linux orchestrator runner** — the

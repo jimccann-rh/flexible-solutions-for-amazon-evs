@@ -1590,7 +1590,45 @@ def _aws_config_preflight(config: dict) -> None:
     build_network_plan(config.get("network", {}))
 
 
-def _build_aws_config_template(config: dict) -> dict:
+def _aws_config_route53_zone_names(config: dict) -> tuple[str, str]:
+    fqdn = config["dns"]["fqdn"].rstrip(".")
+    network = ipaddress.ip_network(config["network"]["vpc_cidr"])
+    octets = str(network.network_address).split(".")
+    return fqdn, f"{octets[1]}.{octets[0]}.in-addr.arpa"
+
+
+def _find_existing_route53_zone_ids(config: dict, route53) -> dict[str, str]:
+    """Find the expected private zones already associated with a BYO VPC."""
+    fqdn, reverse_zone_name = _aws_config_route53_zone_names(config)
+    expected = {
+        fqdn.rstrip(".").lower(): "forward",
+        reverse_zone_name.rstrip(".").lower(): "reverse",
+    }
+    found = {}
+    next_token = None
+    while True:
+        request = {"VPCId": config["vpc"]["id"], "VPCRegion": config["aws"]["region"]}
+        if next_token:
+            request["NextToken"] = next_token
+        response = route53.list_hosted_zones_by_vpc(**request)
+        for zone in response.get("HostedZoneSummaries", []):
+            key = expected.get(zone.get("Name", "").rstrip(".").lower())
+            if key and zone.get("HostedZoneId"):
+                found[key] = zone["HostedZoneId"]
+        next_token = response.get("NextToken")
+        if not next_token:
+            break
+
+    missing = [name for name, key in expected.items() if key not in found]
+    if missing:
+        raise RuntimeError(
+            f"aws_config: BYO VPC {config['vpc']['id']} must already be associated "
+            "with private hosted zones for " + ", ".join(missing)
+        )
+    return found
+
+
+def _build_aws_config_template(config: dict, existing_zone_ids: dict | None = None) -> dict:
     """Render the aws_config CloudFormation template from the blueprint."""
     vpc = config["vpc"]
     network = config["network"]
@@ -1598,9 +1636,7 @@ def _build_aws_config_template(config: dict) -> dict:
     vpc_cidr = network["vpc_cidr"]
     resolver_addresses = resolver_ips(network_plan["service_access"])
     nsx_uplink_cidr = network_plan["vlans"]["nsxUplink"]
-    reverse_octets = str(ipaddress.ip_network(vpc_cidr).network_address).split(".")
-    fqdn = config["dns"]["fqdn"].rstrip(".")
-    reverse_zone_name = f"{reverse_octets[1]}.{reverse_octets[0]}.in-addr.arpa"
+    fqdn, reverse_zone_name = _aws_config_route53_zone_names(config)
     region = config["aws"]["region"]
     hostnames = config.get("hostnames", {})
     tags = AWS_CONFIG_TAGS
@@ -1778,6 +1814,13 @@ def _build_aws_config_template(config: dict) -> dict:
         },
     }
 
+    existing_zone_ids = existing_zone_ids or {}
+    if existing_zone_ids:
+        resources.pop("ForwardZone")
+        resources.pop("ReverseZone")
+    forward_zone_id = existing_zone_ids.get("forward", {"Ref": "ForwardZone"})
+    reverse_zone_id = existing_zone_ids.get("reverse", {"Ref": "ReverseZone"})
+
     if vpc.get("public_subnet_route_table_id"):
         resources["RouteServerPropagationPublic"] = {
             "Type": "AWS::EC2::RouteServerPropagation",
@@ -1867,7 +1910,7 @@ def _build_aws_config_template(config: dict) -> dict:
         resources[f"FwdRecord{n:02d}"] = {
             "Type": "AWS::Route53::RecordSet",
             "Properties": {
-                "HostedZoneId": {"Ref": "ForwardZone"},
+                "HostedZoneId": forward_zone_id,
                 "Name": f"{host}.{fqdn}.",
                 "Type": "A", "TTL": "300",
                 "ResourceRecords": [ip],
@@ -1876,7 +1919,7 @@ def _build_aws_config_template(config: dict) -> dict:
         resources[f"PtrRecord{n:02d}"] = {
             "Type": "AWS::Route53::RecordSet",
             "Properties": {
-                "HostedZoneId": {"Ref": "ReverseZone"},
+                "HostedZoneId": reverse_zone_id,
                 "Name": f"{ptr}.",
                 "Type": "PTR", "TTL": "300",
                 "ResourceRecords": [f"{host}.{fqdn}."],
@@ -1944,7 +1987,7 @@ def _build_aws_config_template(config: dict) -> dict:
 
     template = {
         "AWSTemplateFormatVersion": "2010-09-09",
-        "Description": "VCF deployment infrastructure (NAT gateway, DNS zones, "
+        "Description": "VCF deployment infrastructure (NAT gateway, DNS records, "
                        "Route Server, security group, key pair). Created automatically "
                        "by the EVS Deployment Orchestrator — do not delete this stack directly.",
         "Resources": resources,
@@ -1959,7 +2002,7 @@ def _build_aws_config_template(config: dict) -> dict:
             "RouteServerEndpoint02Ip": {"Value": {"Fn::GetAtt": ["RouteServerEndpoint02", "EniAddress"]}},
             "KeyName": {"Value": {"Ref": "EvsKeyPair"}},
             "NatGatewayId": {"Value": {"Ref": "NatGateway"}},
-            "ForwardZoneId": {"Value": {"Ref": "ForwardZone"}},
+            "ForwardZoneId": {"Value": forward_zone_id},
         },
     }
 
@@ -1982,6 +2025,24 @@ def _aws_config_cfn(config: dict):
         region_name=config["aws"]["region"],
     )
     return session.client("cloudformation")
+
+
+def _guard_byo_vpc_zone_resources(cfn, stack_name: str) -> None:
+    zones = [
+        resource for resource in cfn.describe_stack_resources(StackName=stack_name).get(
+            "StackResources", [],
+        )
+        if resource.get("LogicalResourceId") in ("ForwardZone", "ReverseZone")
+        and resource.get("PhysicalResourceId")
+        and resource.get("ResourceStatus") not in ("DELETE_COMPLETE", "DELETE_SKIPPED")
+    ]
+    if zones:
+        names = ", ".join(resource["LogicalResourceId"] for resource in zones)
+        raise RuntimeError(
+            f"aws_config: refusing BYO-VPC operation on stack {stack_name}; "
+            f"it still owns Route 53 zone resource(s) {names}. Retain those "
+            "resources in CloudFormation before retrying to prevent zone deletion."
+        )
 
 
 def _associate_hcx_cidr_with_vpc(config: dict, cidr: str) -> None:
@@ -2383,6 +2444,16 @@ def stage_aws_config(config: dict, checkpoint: Checkpoint) -> dict:
 
     _aws_config_preflight(config)
 
+    existing_zone_ids = None
+    if config.get("vpc", {}).get("create") is False:
+        session = boto3.Session(
+            profile_name=config["aws"].get("profile"),
+            region_name=config["aws"]["region"],
+        )
+        existing_zone_ids = _find_existing_route53_zone_ids(
+            config, session.client("route53"),
+        )
+
     # --- HCX internet connectivity: provision IPAM + public /28 if needed ---
     hcx = config.get("hcx", {})
     if hcx.get("enabled") and not hcx.get("public_cidr"):
@@ -2419,7 +2490,9 @@ def stage_aws_config(config: dict, checkpoint: Checkpoint) -> dict:
 
     cfn = _aws_config_cfn(config)
     stack_name = _aws_config_stack_name(config)
-    template_body = json.dumps(_build_aws_config_template(config), separators=(",", ":"))
+    template_body = json.dumps(
+        _build_aws_config_template(config, existing_zone_ids), separators=(",", ":"),
+    )
     logger.info("aws_config: deploying stack %s (%d KB template)",
                 stack_name, len(template_body) // 1024)
 
@@ -2438,6 +2511,8 @@ def stage_aws_config(config: dict, checkpoint: Checkpoint) -> dict:
             raise
 
     if status in ("ROLLBACK_COMPLETE", "ROLLBACK_FAILED", "CREATE_FAILED", "DELETE_FAILED"):
+        if existing_zone_ids:
+            _guard_byo_vpc_zone_resources(cfn, stack_name)
         logger.info("aws_config: stack in %s — deleting before re-create", status)
         cfn.delete_stack(StackName=stack_name)
         cfn.get_waiter("stack_delete_complete").wait(StackName=stack_name)
@@ -2468,6 +2543,8 @@ def stage_aws_config(config: dict, checkpoint: Checkpoint) -> dict:
         cfn.get_waiter("stack_create_complete").wait(
             StackName=stack_name, WaiterConfig={"Delay": 30, "MaxAttempts": 80})
     else:
+        if existing_zone_ids:
+            _guard_byo_vpc_zone_resources(cfn, stack_name)
         try:
             cfn.update_stack(StackName=stack_name, TemplateBody=template_body)
             logger.info("aws_config: stack update initiated — waiting")
@@ -2507,8 +2584,8 @@ def stage_aws_config(config: dict, checkpoint: Checkpoint) -> dict:
 
     _apply_aws_config_outputs(config, result)
 
-    # Wait for the new private zone to be resolvable from this instance so the
-    # validate_dns stage doesn't fail on propagation lag (usually seconds).
+    # Wait for the generated private DNS record to resolve so validate_dns
+    # doesn't fail on propagation lag (usually seconds).
     import socket
     probe = f"{config.get('hostnames', {}).get('sddc_manager', 'sddcm')}.{config['dns']['fqdn']}"
     for attempt in range(30):

@@ -1,0 +1,23 @@
+The Resolver endpoint is operational. In AWS, security groups attach to network interfaces/endpoints, not directly to subnets. Its ENIs are in:
+
+ - VPC: vpc-01ae1d02c50c6851c
+ - Subnet: subnet-04affedbf6f7e08e2 — 10.28.32.0/25, my-evs-deployment-service-access
+ - Resolver IPs: 10.28.32.4, 10.28.32.5
+ - Attached security group: sg-08a0b87c09a925fac
+
+ Current security-group rules include all protocols from 10.28.32.0/21 and itself; TCP/UDP 53 and ICMPv4 echo requests from 10.28.40.0/21; and all outbound traffic to 0.0.0.0/0.
+
+ The command I ran to add DNS access was:
+
+ ```bash
+   python Deploy/EVS-Deployment-Orchestrator/tools/allow_resolver_dns.py \
+     --resolver-endpoint-id rslvr-in-ccedd86b72744829a \
+     --security-group-id sg-08a0b87c09a925fac \
+     --vpc-id vpc-01ae1d02c50c6851c \
+     --source-cidr 10.28.40.0/21 \
+     --profile ci \
+     --region us-east-1 \
+     --apply
+ ```
+
+ That script added TCP/53 and UDP/53 ingress rules. The later ping rule was added separately via the script’s --allow-icmp-echo option.

@@ -36,7 +36,7 @@
 #                                           #   below become "<name>.<fqdn>" with no combined-length check.
 
  evs:
-   environment_name: "my-vcf-env"          # REQUIRED. Display name (letters, digits, hyphens, underscores;
+   environment_name: "my-vcf-env-byovpc"          # REQUIRED. Display name (letters, digits, hyphens, underscores;
 #                                           #   must start with a letter/digit; max 100 chars; no dots/spaces).
 #                                           #   Enforced by the EVS API, not locally — an invalid name fails
 #                                           #   at the aws_config stage, not at launch.

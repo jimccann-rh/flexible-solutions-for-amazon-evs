@@ -40,6 +40,24 @@ def allows_source(permissions, protocol, source):
     return False
 
 
+def allows_icmp_echo(permissions, source):
+    for permission in permissions:
+        rule_protocol = permission["IpProtocol"]
+        if rule_protocol not in ("-1", "icmp", "1"):
+            continue
+        if rule_protocol != "-1" and not (
+            permission.get("FromPort") == 8 and permission.get("ToPort") in (0, -1)
+        ):
+            continue
+        for ip_range in permission.get("IpRanges", []):
+            try:
+                if source.subnet_of(ipaddress.ip_network(ip_range["CidrIp"])):
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--resolver-endpoint-id", required=True)
@@ -48,6 +66,8 @@ def main():
     parser.add_argument("--source-cidr", required=True, help="NSX guest IPv4 CIDR")
     parser.add_argument("--profile", default=os.getenv("AWS_PROFILE", "ci"))
     parser.add_argument("--region", default=os.getenv("AWS_REGION", "us-east-1"))
+    parser.add_argument("--allow-icmp-echo", action="store_true",
+                        help="Also allow ICMPv4 ping requests to the resolver")
     parser.add_argument("--apply", action="store_true", help="Apply missing rules; otherwise only report")
     args = parser.parse_args()
 
@@ -86,6 +106,24 @@ def main():
                 "--cidr", str(source),
             )
 
+    add_ping = args.allow_icmp_echo and not allows_icmp_echo(
+        group["IpPermissions"], source,
+    )
+    if add_ping:
+        action = "Would add" if not args.apply else "Adding"
+        print(f"{action} ICMPv4 echo request from {source} to {args.security_group_id}")
+        if args.apply:
+            aws_json(
+                args.profile, args.region, "ec2", "authorize-security-group-ingress",
+                "--group-id", args.security_group_id,
+                "--ip-permissions", json.dumps([{
+                    "IpProtocol": "icmp",
+                    "FromPort": 8,
+                    "ToPort": 0,
+                    "IpRanges": [{"CidrIp": str(source)}],
+                }]),
+            )
+
     if not args.apply:
         print("Dry run only; pass --apply to add the missing rules.")
         return
@@ -98,6 +136,10 @@ def main():
            for p in ("tcp", "udp")):
         raise RuntimeError("AWS did not report both DNS ingress rules after applying")
     print("Verified TCP and UDP port 53 ingress.")
+    if args.allow_icmp_echo:
+        if not allows_icmp_echo(updated["IpPermissions"], source):
+            raise RuntimeError("AWS did not report the ICMP echo rule after applying")
+        print("Verified ICMPv4 echo ingress.")
 
 
 if __name__ == "__main__":

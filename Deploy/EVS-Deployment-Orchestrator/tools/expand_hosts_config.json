@@ -1,0 +1,35 @@
+{
+  "_comment": "Expansion hosts config. Copy this file, update environmentId/fqdn/region to match your Phase 2 config.json, and adjust expansionHosts as needed.",
+  "environmentId": "env-ksksyki5m0",
+  "region": "us-east-1",
+  "fqdn": "vci.devcluster.openshift.com",
+  "vcfInstallerProductVersion": "9.1.0.0",
+  "esxVersion": null,
+  "esxiSubnetCidr": "10.28.33.0/25",
+  "expansionHosts": [
+    {
+      "hostName": "esxi05",
+      "keyName": "vsphere-ci",
+      "instanceType": "i7i.metal-24xl",
+      "hostOffset": 15
+    },
+    {
+      "hostName": "esxi06",
+      "keyName": "vsphere-ci",
+      "instanceType": "i7i.metal-24xl",
+      "hostOffset": 16
+    },
+    {
+      "hostName": "esxi07",
+      "keyName": "vsphere-ci",
+      "instanceType": "i7i.metal-24xl",
+      "hostOffset": 17
+    },
+    {
+      "hostName": "esxi08",
+      "keyName": "vsphere-ci",
+      "instanceType": "i7i.metal-24xl",
+      "hostOffset": 18
+    }
+  ]
+}
